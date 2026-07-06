@@ -3,7 +3,7 @@ import { MessageSquare, LayoutDashboard, Database, Shield } from 'lucide-react';
 import { ROLES } from '../config';
 
 export default function Sidebar({ currentPage, setCurrentPage, currentRole, setCurrentRole }) {
-  
+
   const roleObj = ROLES.find(r => r.id === currentRole);
 
   return (
@@ -21,12 +21,12 @@ export default function Sidebar({ currentPage, setCurrentPage, currentRole, setC
         <div style={{ background: 'var(--accent-primary)', padding: '6px', borderRadius: '8px' }}>
           <Database size={20} color="white" />
         </div>
-        <h1 className="font-semibold" style={{ fontSize: '1.25rem' }}>NovaMind</h1>
+        <h1 className="font-semibold" style={{ fontSize: '1.25rem' }}>TechNova</h1>
       </div>
 
       {/* Navigation */}
       <nav className="flex-col gap-2 mb-8" style={{ display: 'flex' }}>
-        <button 
+        <button
           onClick={() => setCurrentPage('chat')}
           style={{
             display: 'flex', alignItems: 'center', gap: '0.75rem', padding: '0.75rem 1rem',
@@ -38,8 +38,8 @@ export default function Sidebar({ currentPage, setCurrentPage, currentRole, setC
           <MessageSquare size={18} />
           <span className="font-medium">Secure Chat</span>
         </button>
-        
-        <button 
+
+        <button
           onClick={() => setCurrentPage('admin')}
           style={{
             display: 'flex', alignItems: 'center', gap: '0.75rem', padding: '0.75rem 1rem',
@@ -61,7 +61,7 @@ export default function Sidebar({ currentPage, setCurrentPage, currentRole, setC
           <h3 className="text-xs font-semibold text-muted mb-4" style={{ letterSpacing: '0.05em', textTransform: 'uppercase' }}>
             RBAC Simulator
           </h3>
-          
+
           <div className="flex-col gap-2" style={{ marginBottom: '2rem' }}>
             {ROLES.map(role => (
               <button
