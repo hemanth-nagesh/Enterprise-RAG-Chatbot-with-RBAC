@@ -1,0 +1,168 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Transform: AWS::Serverless-2016-10-31
+Description: >
+  Enterprise RAG Chatbot with RBAC
+  Serverless backend for PDF ingestion, RBAC-filtered retrieval, and LLM generation.
+
+Parameters:
+  GroqApiKey:
+    Type: String
+    NoEcho: true
+    Description: Your Groq API Key
+  PineconeApiKey:
+    Type: String
+    NoEcho: true
+    Description: Your Pinecone API Key
+  PineconeHost:
+    Type: String
+    Description: Your Pinecone Index Host URL (e.g., https://my-index-xxxx.svc.pinecone.io)
+  GeminiApiKey:
+    Type: String
+    NoEcho: true
+    Description: Your Google Gemini API Key
+
+Globals:
+  Function:
+    Timeout: 60
+    MemorySize: 512
+    Environment:
+      Variables:
+        GROQ_API_KEY: !Ref GroqApiKey
+        PINECONE_API_KEY: !Ref PineconeApiKey
+        PINECONE_HOST: !Ref PineconeHost
+        GEMINI_API_KEY: !Ref GeminiApiKey
+
+Resources:
+  # 1. API Gateway
+  ChatbotApi:
+    Type: AWS::Serverless::Api
+    Properties:
+      StageName: prod
+      Cors:
+        AllowMethods: "'POST, OPTIONS'"
+        AllowHeaders: "'Content-Type,X-Api-Key'"
+        AllowOrigin: "'*'"
+      Auth:
+        ApiKeyRequired: false # Set to true for production with a proper Usage Plan
+
+  # 2. S3 Bucket for PDFs — no S3 event defined here to avoid circular dependency
+  DocumentBucket:
+    Type: AWS::S3::Bucket
+    DependsOn: IngestionFunctionS3Permission   # bucket can only notify AFTER permission exists
+    Properties:
+      BucketName: !Sub "rag-chatbot-docs-${AWS::AccountId}-${AWS::Region}"
+      PublicAccessBlockConfiguration:
+        BlockPublicAcls: true
+        BlockPublicPolicy: true
+        IgnorePublicAcls: true
+        RestrictPublicBuckets: true
+      NotificationConfiguration:
+        LambdaConfigurations:
+          - Event: s3:ObjectCreated:*
+            Filter:
+              S3Key:
+                Rules:
+                  - Name: suffix
+                    Value: '.pdf'
+            Function: !GetAtt IngestionFunction.Arn
+
+  # 3. Explicit Lambda permission so S3 can invoke the Ingestion function
+  IngestionFunctionS3Permission:
+    Type: AWS::Lambda::Permission
+    Properties:
+      FunctionName: !GetAtt IngestionFunction.Arn
+      Action: lambda:InvokeFunction
+      Principal: s3.amazonaws.com
+      SourceAccount: !Ref AWS::AccountId
+      SourceArn: !Sub "arn:aws:s3:::rag-chatbot-docs-${AWS::AccountId}-${AWS::Region}"
+
+  # 4. DynamoDB Tables
+  DocumentsTable:
+    Type: AWS::DynamoDB::Table
+    Properties:
+      TableName: Documents
+      BillingMode: PAY_PER_REQUEST
+      AttributeDefinitions:
+        - AttributeName: document_id
+          AttributeType: S
+      KeySchema:
+        - AttributeName: document_id
+          KeyType: HASH
+
+  AuditLogTable:
+    Type: AWS::DynamoDB::Table
+    Properties:
+      TableName: AuditLog
+      BillingMode: PAY_PER_REQUEST
+      AttributeDefinitions:
+        - AttributeName: audit_id
+          AttributeType: S
+      KeySchema:
+        - AttributeName: audit_id
+          KeyType: HASH
+
+  # 5. Ingestion Lambda — NO Events block (S3 trigger defined in the bucket above)
+  IngestionFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      CodeUri: ../lambdas/ingestion/
+      Handler: handler.lambda_handler
+      Runtime: python3.11
+      Environment:
+        Variables:
+          DYNAMODB_TABLE_NAME: !Ref DocumentsTable
+      Policies:
+        - S3ReadPolicy:
+            BucketName: !Sub "rag-chatbot-docs-${AWS::AccountId}-${AWS::Region}"
+        - DynamoDBCrudPolicy:
+            TableName: !Ref DocumentsTable
+
+  # 6. Chat Lambda
+  ChatFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      CodeUri: ../lambdas/chat/
+      Handler: handler.lambda_handler
+      Runtime: python3.11
+      Environment:
+        Variables:
+          DYNAMODB_AUDIT_TABLE: !Ref AuditLogTable
+      Policies:
+        - DynamoDBCrudPolicy:
+            TableName: !Ref AuditLogTable
+      Events:
+        ChatApi:
+          Type: Api
+          Properties:
+            Path: /chat
+            Method: post
+            RestApiId: !Ref ChatbotApi
+
+  # 7. Audit Lambda
+  AuditFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      CodeUri: ../lambdas/audit/
+      Handler: handler.lambda_handler
+      Runtime: python3.11
+      Environment:
+        Variables:
+          DYNAMODB_AUDIT_TABLE: !Ref AuditLogTable
+      Policies:
+        - DynamoDBReadPolicy:
+            TableName: !Ref AuditLogTable
+      Events:
+        AuditApi:
+          Type: Api
+          Properties:
+            Path: /audit
+            Method: get
+            RestApiId: !Ref ChatbotApi
+
+Outputs:
+  ApiUrl:
+    Description: "API Gateway endpoint URL for Prod stage"
+    Value: !Sub "https://${ChatbotApi}.execute-api.${AWS::Region}.amazonaws.com/prod/chat/"
+  BucketName:
+    Description: "S3 Bucket name for uploading PDFs"
+    Value: !Ref DocumentBucket
